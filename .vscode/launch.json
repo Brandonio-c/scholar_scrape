@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Conda Env - Scholar Scrape",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": ["--CLI", "--scholar_API"],
+            "python": "C:\\Users\\brand\\miniconda3\\envs\\scholar_scrape\\python.exe"
+        }
+    ]
+}
