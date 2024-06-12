@@ -24,7 +24,7 @@ pip install -r requirements.txt
 To run the tool in CLI mode with the scholarly API:
 
 ```bash
-python3 scholar_search.py --CLI --scholar_API
+python3 scholar_scrape.py --CLI --scholar_API
 ```
 
 ### For GUI mode, use:
