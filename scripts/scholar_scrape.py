@@ -33,6 +33,8 @@ import re
 import os
 import argparse
 from datetime import datetime
+from selenium.common.exceptions import TimeoutException
+
 
 # Library Imports
 from selenium import webdriver
@@ -64,10 +66,15 @@ class Selenium_Scholar_Scraper():
         plot_directory (str): Path where plots will be saved.
         wait_time (int): How long Selenium will wait for a page to load before timing out.
     """
-    def __init__(self, output_directory: os.path, plot_directory: os.path, wait_time: int=20):
+    def __init__(self, output_directory: os.path, plot_directory: os.path, wait_time: int=100):
         #self._output_directory = self.ensure_directory_exists(output_directory)
         #self._plot_directory = self.ensure_directory_exists(plot_directory)
-        self._service = ChromeService(ChromeDriverManager().install())
+        chrome_install = ChromeDriverManager().install()
+
+        folder = os.path.dirname(chrome_install)
+        chromedriver_path = os.path.join(folder, "chromedriver.exe")
+        self._service = ChromeService(chromedriver_path)
+        #self._service = ChromeService(ChromeDriverManager().install())
         self._driver = webdriver.Chrome(service=self._service)
         self._wait = WebDriverWait(self._driver, wait_time)
         self.open_google_scholar()
@@ -93,6 +100,58 @@ class Selenium_Scholar_Scraper():
         #    print("Failed to load results in time. Please try again with a different query or check your network.")
         #    return []
 
+    def send_query_and_adjust_settings(self, query: str):
+        """Submits a search query to Google Scholar and adjusts settings like unchecking the 'Include citations' checkbox."""
+        search_box = self.get_query_box()
+        print(f'Querying Google Scholar with: {query}')
+        search_box.send_keys(query)
+        search_box.send_keys(Keys.RETURN)
+
+        # Wait for the search results to be visible and then interact with settings
+        try:
+            WebDriverWait(self._driver, 10).until(
+                EC.visibility_of_element_located((By.ID, 'gs_res_ccl_mid'))  # Assumption: ID of the results container
+            )
+            print("Search results loaded.")
+            self.adjust_search_settings()
+        except Exception as e:
+            print(f"Failed to load search results or interact with settings: {e}")
+
+    def adjust_search_settings(self):
+        """Adjusts search settings such as unchecking the 'Include citations' checkbox."""
+        try:
+            checkbox = WebDriverWait(self._driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'a.gs_cb_gen'))
+            )
+            if checkbox.get_attribute('aria-checked') == 'true':
+                checkbox.click()
+                print("Citations checkbox has been unchecked.")
+            else:
+                print("Citations checkbox is already unchecked.")
+        except Exception as e:
+            print(f"Failed to locate or interact with the 'Include citations' checkbox: {e}")
+
+    def uncheck_include_citations(self):
+        try:            
+            # Find the checkbox link that includes citations by its aria-checked attribute
+            checkbox_link = WebDriverWait(self._driver, 100).until(
+                            EC.visibility_of_element_located((By.CSS_SELECTOR, 'div.gs_bdy_sb_sec'))
+                        )
+            
+            # Uncheck the checkbox if it is found to be checked
+            if checkbox_link:
+                checkbox_link.click()  # Click to uncheck
+                print("Citations checkbox has been unchecked.")
+            else:
+                print("Citations checkbox was not found checked, no need to uncheck.")
+
+        except TimeoutException:
+            print("Failed to locate the citations checkbox within the given time.")
+        except Exception as e:
+            print(f"An error occurred while trying to uncheck the citations checkbox: {e}")
+
+
+
     def wait_for_responses(self):
         """Waits for the search results page to load and verifies its presence."""
         try:
@@ -105,23 +164,61 @@ class Selenium_Scholar_Scraper():
         except:
             return False
         
-    def extract_results(self):
+    def extract_results(self, query: str):
         print('Extracting Results...')
         results = []
         page_number = 1
         has_next_page = True
+        search_terms = [term.lower() for term in query.replace('"', '').split(' OR ')]
 
         while has_next_page:
-            print(f"Processing page: {page_number}")
-            # Extract publication titles and years on the current page
+            print(f"Processing page: {page_number}")              
             articles = self._driver.find_elements(By.CSS_SELECTOR, '.gs_rt')
             years = self._driver.find_elements(By.CSS_SELECTOR, '.gs_a')
+            all_valid_data = []  # This will store tuples of (title, year)
 
-            for article in articles:
-                print(article.get_attribute('.gs_rt'))
+            # List to hold articles and years without citations
+            valid_articles = []
+            valid_years = []
 
-            results.extend(self.process_page(articles=articles, 
-                                                years=years))  
+            for article, year in zip(articles, years):
+            # Check if citation is present in the parent element of the title
+                #parent_element = article.find_element(By.XPATH, '..')  # Get the parent div of the h3.gs_rt
+                citation_present = article.find_elements(By.CSS_SELECTOR, 'span.gs_ctu span.gs_ct1')
+
+                # If citation is present and matches '[CITATION]', skip processing this article
+                if citation_present and '[CITATION]' in citation_present[0].text:
+                    continue
+
+                # For some reason not working and is causing issues now? 
+                #article_text = article.text.lower()
+                #if not any(term in article_text for term in search_terms):
+                #    continue
+
+                year_text = year.text
+                # Attempt to extract the year after the last comma
+                parts = year_text.split(', ')
+                possible_year = parts[-1] if parts else 'Unknown'
+                
+                # Validate that the extracted part is a four-digit year
+                if re.match(r'\d{4}', possible_year):
+                    year = possible_year
+                    year_match = re.search(r'\b(19|20)\d{2}\b', year)
+                    year = year_match.group()
+                else:
+                    year = 'Unknown'  # Default to 'Unknown' if the format does not match
+
+                valid_articles.append(article.text)  # Store the article title
+                valid_years.append(year)  # Store the extracted year
+                all_valid_data.append((article.text, year))  # Add the valid data to list
+            
+            # Process only valid articles and years
+            results.extend([(title, year) for title, year in all_valid_data])
+
+            #Process only valid articles and years
+            #if valid_articles and valid_years:
+            #   results.extend(self.process_page(valid_articles, valid_years))
+               
 
             # Check if there is a next page
             try:
@@ -136,6 +233,9 @@ class Selenium_Scholar_Scraper():
                 has_next_page = False
 
         self._driver.quit()
+        with open('valid_articles_and_years.txt', 'w', encoding='utf-8') as file:
+            for title, year in all_valid_data:
+                file.write(f"{title}, {year}\n")
         return results
 
     def check_next_page(self, page_number):
@@ -155,6 +255,10 @@ class Selenium_Scholar_Scraper():
         for article, year in zip(articles, years):
             title = article.text
             year_text = year.text
+            # Bug fix! 
+            # Skip citations and invalid years
+            if "[CITATION]" in title or "N/A" in year_text:
+                continue
             year_match = re.search(r'\b(19|20)\d{2}\b', year_text)
             if year_match:
                 pub_year = year_match.group()
@@ -288,8 +392,12 @@ class DisplayResults():
         # Clean the filename base by removing non-alphanumeric characters except underscores
         clean_query = re.sub(r'[^\w\s]', '', clean_query).replace(' ', '_').lower()
 
+        # Filter out entries with "Unknown" as the year
+        filtered_year_count = {year: count for year, count in year_count.items() if year != 'Unknown'}
+
+
         # Create a DataFrame for plotting
-        data = pd.DataFrame(list(year_count.items()), columns=['Year', 'Count'])
+        data = pd.DataFrame(list(filtered_year_count.items()), columns=['Year', 'Count'])
         plot = (ggplot(data, aes(x='Year', y='Count')) +
                 geom_bar(stat='identity', fill='blue') +
                 theme_classic() +
@@ -388,7 +496,8 @@ def main(args):
                 query = sss.format_search_query(query=query)
                 sss.send_query(query=query)
                 if sss.wait_for_responses():
-                    results = sss.extract_results()
+                    #sss.uncheck_include_citations()  # Uncheck the checkbox after results load
+                    results = sss.extract_results(query)
                 else:
                     quit(f'Unable to Retrieve results for {query}, try again or try a simpler query')
 

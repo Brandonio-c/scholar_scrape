@@ -1,0 +1,2 @@
+AdTEC: A Unified Benchmark for Evaluating Text Quality in Search Engine Advertising, 2024
+MMMU-Pro: A More Robust Multi-discipline Multimodal Understanding Benchmark, 2024
