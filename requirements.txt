@@ -1,8 +1,16 @@
-#conda install pandas=1.4.3 matplotlib=3.5.2 scipy
-selenium==4.5.0
-webdriver-manager==4.0.1
-pandas==1.4.3
-matplotlib==3.5.2 
-plotnine==0.9.0
-mizani==0.7.3  # Specifying a version known to be compatible with plotnine 0.9.0
-scholarly==1.6.3
+# Core dependencies (pinned for compatibility with NumPy <2)
+numpy==1.23.5          # Avoids binary incompatibility with pandas/matplotlib
+pandas==1.4.3          # Compatible with NumPy 1.23.x
+matplotlib==3.5.1      # Compatible with plotnine and pandas 1.4.x
+scipy==1.9.1           # Stable with this version stack
+
+# Plotting
+plotnine==0.9.0        # Grammar of graphics library
+mizani==0.7.3          # Required by plotnine, compatible with matplotlib 3.5+
+
+# Web scraping
+selenium==4.5.0        # Automates browser actions
+webdriver-manager==4.0.1  # Manages driver binaries automatically
+
+# Google Scholar scraping
+scholarly==1.6.3       # Unofficial Google Scholar API

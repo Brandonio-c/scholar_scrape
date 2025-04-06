@@ -50,6 +50,10 @@ from plotnine import ggplot, aes, geom_bar, theme_classic, labs, element_text, t
 import tkinter as tk
 from tkinter import Toplevel, StringVar, Entry, Radiobutton, Button
 from scholarly import scholarly
+from sys import platform
+from selenium.webdriver.chrome.options import Options
+import glob
+import time
 
 # User Imports
 
@@ -67,21 +71,80 @@ class Selenium_Scholar_Scraper():
         wait_time (int): How long Selenium will wait for a page to load before timing out.
     """
     def __init__(self, output_directory: os.path, plot_directory: os.path, wait_time: int=100):
-        #self._output_directory = self.ensure_directory_exists(output_directory)
-        #self._plot_directory = self.ensure_directory_exists(plot_directory)
-        chrome_install = ChromeDriverManager().install()
+        # Download the driver
+        driver_dir = ChromeDriverManager().install()
+        print(f"Driver directory: {driver_dir}")
 
-        folder = os.path.dirname(chrome_install)
-        chromedriver_path = os.path.join(folder, "chromedriver.exe")
-        self._service = ChromeService(chromedriver_path)
-        #self._service = ChromeService(ChromeDriverManager().install())
-        self._driver = webdriver.Chrome(service=self._service)
+        # Find the real chromedriver binary
+        bin_path = os.path.join(os.path.dirname(driver_dir), "chromedriver")
+        if not os.path.exists(bin_path):
+            matches = glob.glob(os.path.join(os.path.dirname(driver_dir), "*chromedriver"))
+            if matches:
+                bin_path = matches[0]
+            else:
+                raise RuntimeError(f"Couldn't locate the actual chromedriver binary near {driver_dir}")
+
+        # Sanity check and fix permissions if needed
+        if not os.access(bin_path, os.X_OK):
+            print(f"[WARNING] {bin_path} is not executable. Attempting to set permissions...")
+            try:
+                os.chmod(bin_path, 0o755)  # Make it executable
+            except Exception as e:
+                raise RuntimeError(f"Failed to chmod {bin_path} to 755: {e}")
+
+            # Check again
+            if not os.access(bin_path, os.X_OK):
+                raise RuntimeError(f"{bin_path} is not executable even after attempting to chmod.")
+
+        print(f"Using ChromeDriver binary at: {bin_path}")
+        self._service = ChromeService(executable_path=bin_path)
+
+        # Set up Chrome options for visible browser with real profile and bot evasion
+        options = Options()
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--allow-running-insecure-content")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+
+        # Use your real Chrome profile (Default on Mac)
+        # options.add_argument("--user-data-dir=" + os.path.expanduser("~/Library/Application Support/Google/Chrome"))
+        # options.add_argument("--profile-directory=Default")  # Use a different profile name if needed
+        # options.add_argument("--profile-directory=Profile 1")  # or Profile 3, etc.
+        options.add_argument("--incognito")
+
+        custom_profile_path = os.path.abspath("./selenium_profile")
+        options.add_argument(f"--user-data-dir={custom_profile_path}")
+
+        # Set realistic user agent
+        options.add_argument(
+            "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
+
+        # Remove Selenium automation flags
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+
+        # Modify navigator.webdriver to avoid detection
+        # options.add_argument("--headless=new")  # Remove if you need visible browser for debugging
+
+        # Initialize WebDriver
+        self._driver = webdriver.Chrome(service=self._service, options=options)
+
+        # Execute script to hide WebDriver details
+        self._driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        # Optional: give you time to solve reCAPTCHA if it appears
+        # time.sleep(5)
         self._wait = WebDriverWait(self._driver, wait_time)
         self.open_google_scholar()
 
     def open_google_scholar(self):
         """Navigates to the Google Scholar homepage."""
         self._driver.get('https://scholar.google.com/')
+        
 
     def format_search_query(self, query:str):
         "formats search query as a string"
@@ -164,12 +227,20 @@ class Selenium_Scholar_Scraper():
         except:
             return False
         
-    def extract_results(self, query: str):
-        print('Extracting Results...')
+    def extract_results(self, query: str, start_page: int = 1):
+        print(f"Extracting Results starting at page {start_page}...")
+
         results = []
-        page_number = 1
+        page_number = start_page
         has_next_page = True
         search_terms = [term.lower() for term in query.replace('"', '').split(' OR ')]
+
+        # Construct direct URL jump using start_page
+        start_index = (start_page - 1) * 10
+        query_param = query.replace(' ', '+')
+        scholar_url = f"https://scholar.google.com/scholar?start={start_index}&q={query_param}&hl=en&as_sdt=0,21"
+        print(f"Navigating directly to: {scholar_url}")
+        self._driver.get(scholar_url)
 
         while has_next_page:
             print(f"Processing page: {page_number}")              
@@ -218,7 +289,6 @@ class Selenium_Scholar_Scraper():
             #Process only valid articles and years
             #if valid_articles and valid_years:
             #   results.extend(self.process_page(valid_articles, valid_years))
-               
 
             # Check if there is a next page
             try:
@@ -480,15 +550,26 @@ def main(args):
             query = input("Enter your search query for Scholarly Databases (type 'exit' to quit): ")
             if query.lower() == 'exit':
                 break
+
+            input("Solve the CAPTCHA if it appears, then press Enter here to continue...")
             
             # this if statement is some hamburger ass code but It'll be fixed when the rest of the database scrapers are implemented
             # TODO - fix this 
             if data_source == 'scholar_API':
-                results = sss.search_publications(query)
-                year_count = display.count_publications_by_year(results)
+                results = sss.search_publications(query, start_page=args.start_page)
+                # Combine with previous CSV if provided
+                if args.resume_from_csv and os.path.exists(args.resume_from_csv):
+                    print(f"Combining with previous results from {args.resume_from_csv}")
+                    prev_df = pd.read_csv(args.resume_from_csv)
+                    new_df = pd.DataFrame(results, columns=["Title", "Year"])
+                    combined_df = pd.concat([prev_df, new_df], ignore_index=True).drop_duplicates()
+                else:
+                    combined_df = pd.DataFrame(results, columns=["Title", "Year"])
+                year_count = display.count_publications_by_year(combined_df.values.tolist())
                 display.display_year_counts(year_count)
-                display.save_results_to_csv(pd.DataFrame(results, columns=['Title', 'Year']), query)
+                display.save_results_to_csv(combined_df, query)
                 display.plot_year_counts(year_count, query)
+
             else:
                 now = datetime.now()
                 tn = now.strftime('%y%b%d-%H:%M:%S').upper()
@@ -497,14 +578,24 @@ def main(args):
                 sss.send_query(query=query)
                 if sss.wait_for_responses():
                     #sss.uncheck_include_citations()  # Uncheck the checkbox after results load
-                    results = sss.extract_results(query)
+                    results = sss.extract_results(query, start_page=args.start_page)
                 else:
                     quit(f'Unable to Retrieve results for {query}, try again or try a simpler query')
 
-                year_count = display.count_publications_by_year(results)
+                # Combine with previous CSV if provided
+                if args.resume_from_csv and os.path.exists(args.resume_from_csv):
+                    print(f"Combining with previous results from {args.resume_from_csv}")
+                    prev_df = pd.read_csv(args.resume_from_csv)
+                    new_df = pd.DataFrame(results, columns=["Title", "Year"])
+                    combined_df = pd.concat([prev_df, new_df], ignore_index=True).drop_duplicates()
+                else:
+                    combined_df = pd.DataFrame(results, columns=["Title", "Year"])
+
+                year_count = display.count_publications_by_year(combined_df.values.tolist())
                 display.display_year_counts(year_count)
-                display.save_results_to_csv(pd.DataFrame(results, columns=['Title', 'Year']), query)
+                display.save_results_to_csv(combined_df, query)
                 display.plot_year_counts(year_count, query)
+
     else:
         print("No valid mode selected. Please use --GUI or --CLI.")
 
@@ -528,13 +619,23 @@ if __name__ == "__main__":
     argparser.add_argument('--wait_time', 
                             help='how long selenium should wait before abandoning the search', 
                             type=int, 
-                            default=20)
+                            default=40)
     argparser.add_argument('--scholar_API', 
                             action='store_true', 
                             help='Use scholarly API for data retrieval.')
     argparser.add_argument('--scholar_Web', 
                             action='store_true', 
                             help='Use Selenium for data retrieval.')
+    argparser.add_argument('--start_page',
+                            help='Page number to start scraping from (Google Scholar paginates every 10 results)',
+                            type=int,
+                            default=1)
+    argparser.add_argument('--resume_from_csv',
+                        help='Path to previous results CSV to resume and combine with',
+                        type=str,
+                        default=None)
+
+
 
     args = argparser.parse_args()
     

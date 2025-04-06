@@ -1,2 +1,10 @@
-AdTEC: A Unified Benchmark for Evaluating Text Quality in Search Engine Advertising, 2024
-MMMU-Pro: A More Robust Multi-discipline Multimodal Understanding Benchmark, 2024
+Machine learning with requirements: a manifesto, 2025
+[PDF] Capturing a Recursive Pattern in Neural-Symbolic Reinforcement Learning., 2023
+GS-VQA: Zero-shot neural-symbolic visual question answering with vision-language models, Unknown
+Neuro-symbolic causal reasoning meets signaling game for emergent semantic communications, 2022
+MediSage: An AI Assistant for Healthcare via Composition of Neural-Symbolic Reasoning Operators, 2023
+Keynote Lecture Towards Neuro-Symbolic AI, 2022
+Usage of New Activation Function in Neuro-Symbolic Integration, 2010
+[PDF] The Importance of Being Neural-Symbolic A Wilde Position, 2009
+New Ideas in Neuro Symbolic Reasoning and Learning, 2023
+Enhancing Medical Knowledge Discovery: A Neuro-symbolic System for Inductive Learning over Medical KGs, 2025
