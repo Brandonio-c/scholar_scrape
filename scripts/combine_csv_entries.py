@@ -29,11 +29,14 @@ def count_publications_by_year(df):
     return year_counts
 
 def print_year_counts(dataframe):
-    """Prints number of publications per year in sorted order."""
+    """Prints number of publications per year in sorted order, matching the plot."""
     print("\nPublications per Year:")
-    year_counts = dataframe['Year'].value_counts().sort_index()
+    filtered_df = dataframe[dataframe['Year'].astype(str).str.fullmatch(r'\d{4}')]
+    filtered_df['Year'] = filtered_df['Year'].astype(int)
+    year_counts = filtered_df['Year'].value_counts().sort_index()
     for year, count in year_counts.items():
         print(f"{year}: {count}")
+
 
 
 def plot_year_counts(year_count, output_path):

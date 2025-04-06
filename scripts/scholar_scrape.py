@@ -462,17 +462,24 @@ class DisplayResults():
         # Clean the filename base by removing non-alphanumeric characters except underscores
         clean_query = re.sub(r'[^\w\s]', '', clean_query).replace(' ', '_').lower()
 
-        # Filter out entries with "Unknown" as the year
-        filtered_year_count = {year: count for year, count in year_count.items() if year != 'Unknown'}
+        # Only keep years that are digits and not "Unknown"
+        filtered_year_count = {
+            year: count for year, count in year_count.items() 
+            if str(year).isdigit() and year != 'Unknown'
+        }
 
-
-        # Create a DataFrame for plotting
+        # Convert to DataFrame
         data = pd.DataFrame(list(filtered_year_count.items()), columns=['Year', 'Count'])
-        plot = (ggplot(data, aes(x='Year', y='Count')) +
-                geom_bar(stat='identity', fill='blue') +
-                theme_classic() +
-                labs(x='Year', y='Count of Papers Published Per Year') +
-                theme(axis_text_x=element_text(rotation=90, hjust=1)))
+        data['Year'] = data['Year'].astype(str)  # treat as categorical string
+
+        # Only keep observed values
+        plot = (
+            ggplot(data, aes(x='Year', y='Count')) +
+            geom_bar(stat='identity', fill='blue') +
+            theme_classic() +
+            labs(x='Year', y='Count of Papers Published Per Year') +
+            theme(axis_text_x=element_text(rotation=90, hjust=1))
+        )
 
         # Generate a unique filename by checking existing files
         plot_file_name = os.path.join(self.plot_directory, f'{clean_query}_year_counts_plot.svg')
