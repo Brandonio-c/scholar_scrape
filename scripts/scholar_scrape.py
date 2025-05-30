@@ -34,7 +34,7 @@ import os
 import argparse
 from datetime import datetime
 from selenium.common.exceptions import TimeoutException
-
+import requests
 
 # Library Imports
 from selenium import webdriver
@@ -51,9 +51,12 @@ import tkinter as tk
 from tkinter import Toplevel, StringVar, Entry, Radiobutton, Button
 from scholarly import scholarly
 from sys import platform
-from selenium.webdriver.chrome.options import Options
+# from selenium.webdriver.chrome.options import Options
 import glob
 import time
+from selenium.common.exceptions import NoSuchElementException
+import undetected_chromedriver as uc
+from selenium.webdriver.chrome.options import Options
 
 # User Imports
 
@@ -114,25 +117,26 @@ class Selenium_Scholar_Scraper():
         # options.add_argument("--user-data-dir=" + os.path.expanduser("~/Library/Application Support/Google/Chrome"))
         # options.add_argument("--profile-directory=Default")  # Use a different profile name if needed
         # options.add_argument("--profile-directory=Profile 1")  # or Profile 3, etc.
-        options.add_argument("--incognito")
+        # options.add_argument("--incognito")
 
         custom_profile_path = os.path.abspath("./selenium_profile")
         options.add_argument(f"--user-data-dir={custom_profile_path}")
 
         # Set realistic user agent
-        options.add_argument(
-            "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
+        # options.add_argument(
+        #     "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        # )
 
         # Remove Selenium automation flags
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
+        # options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        # options.add_experimental_option("useAutomationExtension", False)
 
         # Modify navigator.webdriver to avoid detection
         # options.add_argument("--headless=new")  # Remove if you need visible browser for debugging
 
         # Initialize WebDriver
-        self._driver = webdriver.Chrome(service=self._service, options=options)
+        # self._driver = webdriver.Chrome(service=self._service, options=options)
+        self._driver = uc.Chrome(options=options)
 
         # Execute script to hide WebDriver details
         self._driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -215,17 +219,33 @@ class Selenium_Scholar_Scraper():
 
 
 
-    def wait_for_responses(self):
-        """Waits for the search results page to load and verifies its presence."""
+    # def wait_for_responses(self):
+    #     """Waits for the search results page to load and verifies its presence."""
+    #     try:
+    #         print(f"Waiting {self._wait._timeout} seconds for a response")    
+    #         results_container_present = self._wait.until(EC.presence_of_element_located((By.ID, 'gs_res_ccl_mid')))
+    #         if not results_container_present:
+    #             self._driver.quit()
+    #             exit("The results container did not load in time.")
+    #         return True
+    #     except:
+    #         return False
+
+
+    def wait_for_responses(self, timeout=None):
+        """
+        Return True when at least one result title (.gs_rt) is present.
+        """
+        if timeout is None:
+            timeout = self._wait._timeout          # default 40 s
         try:
-            print(f"Waiting {self._wait._timeout} seconds for a response")    
-            results_container_present = self._wait.until(EC.presence_of_element_located((By.ID, 'gs_res_ccl_mid')))
-            if not results_container_present:
-                self._driver.quit()
-                exit("The results container did not load in time.")
+            WebDriverWait(self._driver, timeout).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".gs_rt"))
+            )
             return True
-        except:
+        except TimeoutException:
             return False
+
         
     def extract_results(self, query: str, start_page: int = 1):
         print(f"Extracting Results starting at page {start_page}...")
@@ -281,10 +301,38 @@ class Selenium_Scholar_Scraper():
 
                 valid_articles.append(article.text)  # Store the article title
                 valid_years.append(year)  # Store the extracted year
-                all_valid_data.append((article.text, year))  # Add the valid data to list
+                bibtex_str = ""
+                try:
+                    # click the “Cite” button
+                    cite_btn = article.find_element(By.CSS_SELECTOR, "a.gs_or_cit")
+                    cite_btn.click()
+
+                    # wait for BibTeX link
+                    bib_btn = self._wait.until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "a.gs_citi"))
+                    )
+                    bib_url = bib_btn.get_attribute("href")
+                    raw = requests.get(bib_url, timeout=10).text
+
+                    # strip surrounding brackets
+                    bib = raw.strip()
+                    if bib.startswith("[") and bib.endswith("]"):
+                        bib = bib[1:-1].strip()
+
+                    # close popup
+                    close_btn = self._driver.find_element(By.ID, "gs_cb_cit-x")
+                    close_btn.click()
+
+                    bibtex_str = bib
+
+                except (TimeoutException, NoSuchElementException):
+                    # no citation popup or took too long
+                    bibtex_str = ""
+
+                all_valid_data.append((article.text, year, bibtex_str))  # Add the valid data to list
             
             # Process only valid articles and years
-            results.extend([(title, year) for title, year in all_valid_data])
+            results.extend(all_valid_data)
 
             #Process only valid articles and years
             #if valid_articles and valid_years:
@@ -304,8 +352,8 @@ class Selenium_Scholar_Scraper():
 
         self._driver.quit()
         with open('valid_articles_and_years.txt', 'w', encoding='utf-8') as file:
-            for title, year in all_valid_data:
-                file.write(f"{title}, {year}\n")
+            for title, year, bibtex_str in all_valid_data:
+                results.append((title, year, bibtex_str))
         return results
 
     def check_next_page(self, page_number):
@@ -349,12 +397,14 @@ class Scholarly_Scholar_Scraper():
         try:
             while True:
                 pub = next(search_query)
+                pub_filled = scholarly.fill(pub)
+                bibtex_str = scholarly.bibtex(pub_filled)
                 pub_year = pub['bib'].get('pub_year', 'No year')
                 title = pub['bib'].get('title', 'No title')
                 year_match = re.search(r'\b(19|20)\d{2}\b', pub_year)
                 if year_match:
                     pub_year = year_match.group()
-                results.append((title, pub_year))
+                results.append((title, pub_year, bibtex_str))
         except StopIteration:
             pass
         return results
@@ -404,12 +454,40 @@ class DisplayResults():
         output_directory (str): Path where the CSV results will be saved.
         plot_directory (str): Path where plots will be saved.
     """
+    def save_results_to_bib(self, bib_entries, query,
+                            file_name_prefix="publications_bib"):
+        """
+        bib_entries : list[str] –­­ one BibTeX string per paper
+        """
+        # re-use the sane filename logic you already have
+        query_parts = query.split()
+        num_words_to_use = min(3, len(query_parts))
+        clean_query = re.sub(r"[^\w\s]", "", "_".join(query_parts[:num_words_to_use])).lower()
+        base_file = f"{file_name_prefix}_{clean_query}.bib"
+
+        file_path = os.path.join(self.output_directory, base_file)
+        counter = 1
+        while os.path.exists(file_path):
+            file_path = os.path.join(
+                self.output_directory, f"{file_name_prefix}_{clean_query}_{counter}.bib"
+            )
+            counter += 1
+
+        with open(file_path, "w", encoding="utf-8") as fh:
+            fh.write("\n\n".join(bib_entries))
+
+        print(f"Saved BibTeX to {file_path}")
+
+
     def __init__(self, output_directory: os.path, plot_directory: os.path):
         self.output_directory = output_directory
         self.plot_directory = plot_directory
 
     def count_publications_by_year(self, results):
-        """Counts publications per year from the provided results."""
+        """
+            Counts publications per year from the provided results.
+            Expects each result to be a (title, year, bibtex) tuple.
+        """
         print("Counting publications by year...")
         year_count = {}
         for _, pub_year in results:
@@ -537,7 +615,8 @@ def main(args):
                     results.extend(scraper.search_publications(query))
             year_count = display.count_publications_by_year(results)
             display.display_year_counts(year_count)
-            display.save_results_to_csv(pd.DataFrame(results, columns=['Title', 'Year']), query)
+            titles_years = [(t, y) for t, y, _ in results]
+            display.save_results_to_csv(pd.DataFrame(titles_years, columns=['Title', 'Year']), query)
             display.plot_year_counts(year_count, query)
             root.destroy()
 
@@ -563,7 +642,9 @@ def main(args):
             # this if statement is some hamburger ass code but It'll be fixed when the rest of the database scrapers are implemented
             # TODO - fix this 
             if data_source == 'scholar_API':
-                results = sss.search_publications(query, start_page=args.start_page)
+                # results = sss.search_publications(query, start_page=args.start_page)
+                results = sss.search_publications(query)
+
                 # Combine with previous CSV if provided
                 if args.resume_from_csv and os.path.exists(args.resume_from_csv):
                     print(f"Combining with previous results from {args.resume_from_csv}")
@@ -571,10 +652,14 @@ def main(args):
                     new_df = pd.DataFrame(results, columns=["Title", "Year"])
                     combined_df = pd.concat([prev_df, new_df], ignore_index=True).drop_duplicates()
                 else:
-                    combined_df = pd.DataFrame(results, columns=["Title", "Year"])
+                    titles_years = [(t, y) for t, y, _ in results]
+                    combined_df = pd.DataFrame(titles_years, columns=["Title", "Year"])
+
+                bib_strings  = [b for _, _, b in results]
                 year_count = display.count_publications_by_year(combined_df.values.tolist())
                 display.display_year_counts(year_count)
                 display.save_results_to_csv(combined_df, query)
+                display.save_results_to_bib(bib_strings, query)
                 display.plot_year_counts(year_count, query)
 
             else:
@@ -583,6 +668,8 @@ def main(args):
 
                 query = sss.format_search_query(query=query)
                 sss.send_query(query=query)
+                input("If a CAPTCHA is showing in the browser, solve it now, then press Enter…")
+
                 if sss.wait_for_responses():
                     #sss.uncheck_include_citations()  # Uncheck the checkbox after results load
                     results = sss.extract_results(query, start_page=args.start_page)
@@ -596,7 +683,8 @@ def main(args):
                     new_df = pd.DataFrame(results, columns=["Title", "Year"])
                     combined_df = pd.concat([prev_df, new_df], ignore_index=True).drop_duplicates()
                 else:
-                    combined_df = pd.DataFrame(results, columns=["Title", "Year"])
+                    titles_years = [(t, y) for t, y, _ in results]
+                    combined_df = pd.DataFrame(titles_years, columns=["Title", "Year"])
 
                 year_count = display.count_publications_by_year(combined_df.values.tolist())
                 display.display_year_counts(year_count)
